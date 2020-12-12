@@ -1,117 +1,112 @@
 const fetch = require("node-fetch");
 const EventEmitter = require('events').EventEmitter;
 const cheerio = require("cheerio");
-const fs = require('fs')
 
 
-class Spider extends EventEmitter {
-
+class TaskScheduler extends EventEmitter{
     constructor(options) {
         super();
-        this.init(options);
+        this.init(options)
     }
 
     init(options) {
-        this.tasks = Array.from(new Set(options.tasks));
-        this.errors = []; // 请求失败 大于 预设次数
-        this.result = []; // 结果数据
-        this.maxError = options.maxError || 5;
+        this.listenEvents();
+        this.resolveOptions(options);
+    }
+
+    resolveOptions(options) {
+        this.queue = [];
+        this.processing = [];
+        this.runTask = (typeof options.action    === 'function') ? options.action  :  Promise.resolve();
+        this.taskList = [...options.tasks];
         this.limit = options.limit || 5;
-        this.taskQueue = this.tasks.splice(0, this.limit);
-        this.listenEvens()
-        this.runTask();
     }
 
-    checkParam(options) {
-        const  URL = /(http|https):\/\/([\w.]+\/?)\S*/;
-        if (!options.url) {
-            console.error('没有传递需要爬取的接口地址')
-            return false
-        }
-        if (URL.test(options.url)) {
-            console.error('传递的链接有问题')
-            return false
-        }
-        return true
-    }
-
-
-    urlGenerator({ id }) {
-        return  `https://juejin.cn/user/${id}/posts`
-    }
-
-    listenEvens() {
-        this.on('fetchSuccess', (data) => {
-            if (!this.tasks.length) return 
-            this.taskQueue.push(this.tasks.shift())
-            this.runTask();
-            
-        })
-        this.on('fetchFails', (taskItem) => {
-            this.errors.push(taskItem)
-        })
-    }
-
-    runTask() {
-        this.taskQueue = this.taskQueue.map( item => {
-            if (typeof item !== 'object') {
-                return {id: item, count: 1}
+    listenEvents() {
+        this.on('taskResolve', () => {
+            this.check();
+        });
+        this.on('fetchFail', (taskItem) => {
+            taskItem['$$count'] += 1
+            if (taskItem['$$count'] < 5 ) {
+                this.enqueue(taskItem)
             } else {
-                return item
+                this.emit('taskFail', taskItem);
             }
-        })
-     
-        while(this.taskQueue.length) {
-            this.dispatchRequest(this.taskQueue.shift());
+        });
+    }
+
+    start() {
+        while (this.taskList.length) {
+            this.enqueue({ task: this.taskList.shift(), '$$count': 1});
         }
     }
 
-    dispatchRequest(taskItem) {
-        const url = this.urlGenerator(taskItem)
-        fetch(url)
-        .then((res) => res.text())
-        .then((body) =>  {
-            this.emit('fetchSuccess', body, taskItem);
-        })
-        .catch((err) => {
-            this.handleError(taskItem)
-        })
+    enqueue(task) {  
+        this.queue.push(task);
+        this.check();
     }
 
-    handleError (taskItem) {
-        taskItem.count++;
-        if (taskItem.count < this.maxError)  {
-            this.taskQueue.push(taskItem)
-            this.runTask();
-        } else {
-            this.emit('fetchFails', taskItem.id );
-        }
+    run(item) {
+        this.queue = this.queue.filter(v => v !== item);
+        this.processing.push(item);
+        this.runTask(item.task).then((data) => {
+            this.processing = this.processing.filter(v => v !== item);
+            this.emit('taskResolve', data)
+        }, err => this.emit('fetchFail', item, err));
+    }
+
+    check() {
+        const processingNum = this.processing.length;
+        const availableNum = this.limit - processingNum;
+        this.queue.slice(0, availableNum).forEach(item => {
+            this.run(item);
+        });
     }
 }
 
-let usrList = [764915822103079,2348212569517645,3808363978429613,3667626522862270,2330620350708823,2664871913078168,1626932938285976,923245497557111,'abcdesd','1asdsadsa1dsa1d1sad1==123/fdajfkld']
-let Avatar = new Spider({
-    tasks: usrList
-});
 
-Avatar.on('fetchSuccess', (html, item) => {
-    let $ = cheerio.load(html);
-    let avatar = $(".user-info-block .avatar")[0].attribs["data-src"];
-    let name =
-    fetch(avatar)
-    .then((res) => res.buffer())
-    .then((buffer) =>  {
-        fs.writeFile(`../images/${item.id}.jpg`, buffer, (err) => {
-            if (err) throw err;
-            console.log('文件已被保存');
-        })
-    })
-    // .then(type => console.log(type))
-    console.dir(avatar);
+const usrList = [764915822103079, 2348212569517645, 3808363978429613, 3667626522862270, 2330620350708823, 2664871913078168, 1626932938285976, 923245497557111, 'abcdesd', '1asdsadsa1dsa1d1sad1==123/fdajfkld'];
+
+const errList = [];
+
+const result = []
+
+function urlGenerator(id) {
+    return `https://juejin.cn/user/${id}/posts`;
+}
+
+
+function dispatchRequest(taskItem) {
+    const url = urlGenerator(taskItem)
+    return fetch(url).then((res) => res.text())
+}
+
+
+const dispatch = new TaskScheduler({
+    tasks: usrList,
+    handle: dispatchRequest,
+    limit: 3
 })
-Avatar.on('fetchFails', (item) => {
-    let versionText = item + '\n';
-    fs.appendFileSync('../images/错误日志.txt', versionText)
+
+dispatch.on('taskResolve', (html) => {
+    try{
+        let $ = cheerio.load(html);
+        let avatar = $(".user-info-block .avatar")['0'].attribs['alt'];
+        console.dir(avatar)
+        result.push(avatar)
+    } catch( e) {
+        console.log(e)
+    }
+
 })
+
+dispatch.on('taskFails', (item) => {
+    console.log('taskFails',item)
+    errList.push(item)
+})
+
+
+
 
 
