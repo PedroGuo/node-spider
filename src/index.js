@@ -66,6 +66,8 @@ class TaskScheduler extends EventEmitter{
 }
 
 
+/**********下面为使用方式********* */
+
 const usrList = [764915822103079, 2348212569517645, 3808363978429613, 3667626522862270, 2330620350708823, 2664871913078168, 1626932938285976, 923245497557111, 'abcdesd', '1asdsadsa1dsa1d1sad1==123/fdajfkld'];
 
 const errList = [];
@@ -88,6 +90,9 @@ const dispatch = new TaskScheduler({
     handle: dispatchRequest,
     limit: 3
 })
+
+// 启动任务
+dispatch.start();
 
 dispatch.on('taskResolve', (html) => {
     try{
